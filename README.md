@@ -281,9 +281,8 @@ Use [the Linux smoke-test checklist](docs/linux-smoke-test.md) to verify gamepla
 on the target machine. The automated suite also runs under WSL; it does not launch
 StarCraft II.
 
-When changing the release version, update `pyproject.toml`, the package version,
-and `RELEASE_REF` in `synergy_remote-installer.sh`, then run
-`python tools/write_installer_entry.py` to update the desktop installer.
+When changing the release version, update `pyproject.toml` and the package version.
+Run `python tools/write_installer_entry.py` after changing the desktop bootstrap.
 
 ## Planned work
 
