@@ -41,16 +41,14 @@ This creates `$HOME/Applications/SC2CampaignLauncher`. The application directory
 must be empty on the first installation. Paths containing spaces are supported.
 Local and custom installations have separate records and menu entries.
 
-Release installers download a specific release tag. The desktop installer in
-this checkout targets `v1.2.0` and becomes usable after that tag is published.
-Until then, use the source installation above. For a specific reviewed commit:
+The desktop and remote installers follow the original project's `main` branch.
+Set `SC2CL_REF` to choose a branch, tag, or specific reviewed commit:
 
 ```sh
 SC2CL_REF=<full-commit-id> bash synergy_remote-installer.sh --install local
 ```
 
-The remote installer requires curl and unzip. A release installer continues to
-install its named version; download a newer installer when updating.
+The remote installer requires curl and unzip.
 
 ## Run from source
 
@@ -198,7 +196,7 @@ On Linux, also run:
 ```sh
 bash -n install-uninstall-SC2CLL.sh synergy_remote-installer.sh
 shellcheck install-uninstall-SC2CLL.sh synergy_remote-installer.sh
-desktop-file-validate SC2-Campaign-Launcher-Linux_Install-Uninstall.desktop
+desktop-file-validate SC2CampaignLauncher-Linux-x86_64.desktop
 ```
 
 Build the Windows release on Windows:
@@ -212,9 +210,8 @@ The build checks Qt and artwork, then writes the complete distribution to
 `dist/SC2CampaignLauncher-Windows-x86_64.zip`. Publish that ZIP, not the executable
 alone. CI also produces the ZIP as a build artifact without publishing a release.
 
-When changing the release version, update `pyproject.toml`, the package version,
-and `RELEASE_REF` in `synergy_remote-installer.sh`, then run
-`python tools/write_installer_entry.py` to update the desktop installer.
+When changing the release version, update `pyproject.toml` and the package version.
+Run `python tools/write_installer_entry.py` after changing the desktop bootstrap.
 
 ## Planned work
 

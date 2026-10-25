@@ -11,7 +11,7 @@ pytestmark = pytest.mark.skipif(os.name == 'nt' or not shutil.which('unzip'),
 ROOT = Path(__file__).resolve().parents[1]
 
 
-def test_remote_installer_pins_the_ref_and_preserves_arguments(tmp_path):
+def test_remote_installer_tracks_the_ref_and_preserves_arguments(tmp_path):
     archive = tmp_path / 'release.zip'
     with zipfile.ZipFile(archive, 'w') as package:
         package.writestr('SC2_Campaign_Launcher_Linux-1.2.0/install-uninstall-SC2CLL.sh',
@@ -33,16 +33,11 @@ def test_remote_installer_pins_the_ref_and_preserves_arguments(tmp_path):
                TMPDIR=str(scratch), ARCHIVE=str(archive), RESULT=str(result), CURL_ARGS=str(args))
     env.pop('SC2CL_REF', None)
     ref = 'a' * 40
-    for reference in (None, ref):
+    for reference in (None, ref, 'v1.2.0', 'feature/example'):
         if reference:
             env['SC2CL_REF'] = reference
         subprocess.run(['bash', str(ROOT / 'synergy_remote-installer.sh'), '--install', 'custom',
                         '--directory', '/games/My Apps'], env=env, check=True, capture_output=True, timeout=10)
         assert result.read_text().splitlines() == ['--install', 'custom', '--directory', '/games/My Apps']
-        assert f'/archive/{reference or "v1.2.0"}.zip' in args.read_text()
+        assert f'/archive/{reference or "main"}.zip' in args.read_text()
         assert list(scratch.iterdir()) == [keep]
-    env['SC2CL_REF'] = 'main'
-    rejected = subprocess.run(['bash', str(ROOT / 'synergy_remote-installer.sh')], env=env,
-                              capture_output=True, text=True, timeout=10)
-    assert rejected.returncode == 1
-    assert 'release tag or a full commit ID' in rejected.stderr

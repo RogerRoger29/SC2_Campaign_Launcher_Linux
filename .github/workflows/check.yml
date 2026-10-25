@@ -37,7 +37,7 @@ jobs:
         run: |
           bash -n install-uninstall-SC2CLL.sh synergy_remote-installer.sh
           shellcheck install-uninstall-SC2CLL.sh synergy_remote-installer.sh
-          desktop-file-validate SC2-Campaign-Launcher-Linux_Install-Uninstall.desktop
+          desktop-file-validate SC2CampaignLauncher-Linux-x86_64.desktop
       - run: python -m sc2_campaign_launcher_linux --smoke-test
         env:
           QT_QPA_PLATFORM: offscreen

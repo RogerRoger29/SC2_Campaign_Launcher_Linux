@@ -203,7 +203,7 @@ def test_plain_wine_uses_wine_and_umu_is_resolved_on_path(sc2_root, tmp_path, mo
     options = LaunchOptions(sc2_root, str(wine), str(prefix))
     command, env = backend.command(options, map_path)
     assert command[0] == str(wine)
-    assert command[-1].startswith('C:\\')
+    assert command[-1] == 'Z:' + map_path.resolve().as_posix()
     assert 'PROTONPATH' not in env
     monkeypatch.setattr('sc2_campaign_launcher_linux.platform_backend.shutil.which', lambda _: str(umu))
     command, env = backend.command(LaunchOptions(sc2_root, MANAGED_PROTON, str(prefix)), map_path)
@@ -351,7 +351,7 @@ def test_saved_symlink_path_keeps_its_detected_prefix(qapp, settings, tmp_path, 
         wine.chmod(0o755)
         map_path = write(root / 'Maps/Test/Launcher.SC2Map', b'current map')
         command, env = settings.backend.command(LaunchOptions(alias, str(wine), str(prefix)), map_path)
-        assert command[-1] == 'C:\\StarCraft II\\Maps\\Test\\Launcher.SC2Map'
+        assert command[-1] == 'Z:' + map_path.resolve().as_posix()
         assert env['WINEPREFIX'] == str(prefix)
 
 
