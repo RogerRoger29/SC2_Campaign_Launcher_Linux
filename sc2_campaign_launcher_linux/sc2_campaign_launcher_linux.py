@@ -614,6 +614,10 @@ class MainWindow(QMainWindow):
         self.notice.setTextFormat(Qt.TextFormat.PlainText)
         self.notice.hide()
         layout.addWidget(self.notice)
+        self.recover_launch_btn = QPushButton('Recover launch controls')
+        self.recover_launch_btn.clicked.connect(self._recover_launch)
+        self.recover_launch_btn.hide()
+        layout.addWidget(self.recover_launch_btn)
         self.tabs = QTabWidget()
         self.tab_grids: dict[str, QGridLayout] = {}
         self.tab_viewports: dict[str, QWidget] = {}
@@ -684,6 +688,7 @@ class MainWindow(QMainWindow):
         self._tab_changed(self.tabs.currentIndex())
         self._layout_cards()
         self.settings_btn.setFocus()
+        self._update_controls()
         if autoload and not ccm_only:
             self.load_campaigns()
 
@@ -929,6 +934,8 @@ class MainWindow(QMainWindow):
             self.ccm_page.update_controls()
             changing = changing or bool(self.ccm_page.job)
         running = bool(self.launcher.processes)
+        self.recover_launch_btn.setVisible(running and self.settings.backend.name == 'linux')
+        self.recover_launch_btn.setEnabled(not changing and not self.closing)
         self.settings_btn.setEnabled(not changing and not running and not self.closing)
         self.refresh_btn.setEnabled(not changing and not self.closing)
         queued = {c['slug'] for c, _ in self.queue}
@@ -942,6 +949,25 @@ class MainWindow(QMainWindow):
             can_queue = card.campaign.get('status') != 'installed'
             card.play.setEnabled(not running and (not changing or can_queue) and not self.closing)
             card.remove.setEnabled(card.campaign.get('removable', False) and not running and not self.closing)
+
+    def _recover_launch(self):
+        if self.closing or self.mutation or self.queue or (self.ccm_page is not None and self.ccm_page.job):
+            return
+        if QMessageBox.question(self, 'Recover launch controls',
+                                'Use this if a failed Linux launch has left the controls disabled.\n\n'
+                                'Close any stalled Wine or Proton launch first. Recovery stops tracking '
+                                'the launch; it does not terminate Wine, Proton, or StarCraft II. '
+                                'It will refuse if StarCraft II is detected.\n\nRecover the controls now?') \
+                != QMessageBox.StandardButton.Yes:
+            return
+        try:
+            self.launcher.release_failed_launches()
+        except (OSError, ValueError) as error:
+            self._set_notice(str(error))
+            return
+        self._update_controls()
+        self._set_notice('Launch controls recovered. Campaign files and launch logs were kept. '
+                         'Close any leftover Wine or Proton launch before trying Play again.')
 
     def _set_notice(self, text):
         self.notice.setText(text)

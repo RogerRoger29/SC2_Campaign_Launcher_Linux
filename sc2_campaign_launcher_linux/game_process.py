@@ -1,6 +1,7 @@
 """Monitor direct and Battle.net launches independently of the launcher window."""
 
 import os
+import selectors
 import subprocess
 import sys
 import time
@@ -145,9 +146,31 @@ def run(request_path):
 
 
 def run_direct(request, log):
+    if request.get('linux') and game_pids():
+        raise OSError('Close StarCraft II before starting another campaign.')
     with external_dll_search():
         process = subprocess.Popen(request['command'], cwd=request['root'], stdin=subprocess.DEVNULL,
                                    stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+    if request.get('linux'):
+        with process.stdout, selectors.DefaultSelector() as selector:
+            os.set_blocking(process.stdout.fileno(), False)
+            selector.register(process.stdout, selectors.EVENT_READ)
+
+            def drain():
+                if not selector.get_map():
+                    time.sleep(.1)
+                    return
+                for key, _ in selector.select(.1):
+                    chunk = os.read(key.fd, 64 * 1024)
+                    if not chunk:
+                        selector.unregister(key.fileobj)
+                    else:
+                        try:
+                            append_log(log, chunk)
+                        except OSError:
+                            pass
+
+            return monitor_linux(process, drain)
     with process.stdout:
         while chunk := process.stdout.read1(64 * 1024):
             try:
@@ -155,6 +178,26 @@ def run_direct(request, log):
             except OSError:
                 pass  # Drain the pipe even if the log directory becomes unwritable.
     return process.wait()
+
+
+def monitor_linux(process, drain, timeout=120):
+    deadline = time.monotonic() + timeout
+    started = False
+    while True:
+        if game_pids():
+            started = True
+        elif started:
+            return 0
+        else:
+            code = process.poll()
+            if code not in (None, 0):
+                raise OSError(f'The Linux runner exited with code {code} before StarCraft II started.')
+            if time.monotonic() >= deadline:
+                raise OSError('StarCraft II did not start within two minutes. Check the launch log and '
+                              'close any stalled Wine or Proton launch before retrying. '
+                              'The campaign remains loaded.')
+        # Read a bounded amount without waiting for Wine or a descendant to close stdout.
+        drain()
 
 
 if __name__ == '__main__':

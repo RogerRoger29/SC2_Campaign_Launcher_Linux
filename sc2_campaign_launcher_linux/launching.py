@@ -70,7 +70,8 @@ class LaunchManager(QObject):
         for path in self.log_dir.glob('launch-*.process'):
             try:
                 record = read_json(path)
-                if (not isinstance(record, dict) or not isinstance(record.get('slug'), str)
+                if (not isinstance(record, dict) or record.get('released')
+                        or not isinstance(record.get('slug'), str)
                         or not isinstance(record.get('identity'), str) or not isinstance(record.get('id'), str)):
                     continue
                 process = RecordedProcess(record, path.with_suffix('.result'))
@@ -103,16 +104,17 @@ class LaunchManager(QObject):
         root = options.root.resolve()
         command, env = self.backend.command(options, map_path)
         self.log_dir.mkdir(parents=True, exist_ok=True)
-        key = hashlib.sha256((str(root) + slug).encode()).hexdigest()[:24]
+        job_id = uuid.uuid4().hex
+        key = hashlib.sha256((str(root) + slug).encode()).hexdigest()[:24] + '-' + job_id
         path = self.log_dir / f'launch-{key}.log'
         path.write_text(
             f'SC2: {root}\nRunner: {options.runner}\nPrefix: {options.prefix}\n'
             f'Map: {map_path}\nCommand: {command!r}\n\n', encoding='utf-8')
-        job_id = uuid.uuid4().hex
         request = path.with_suffix('.request')
         via_battlenet = getattr(self.backend, 'name', '') == 'win32' and map_path is None
         atomic_json(request, {'id': job_id, 'command': command, 'root': str(root),
-                              'battlenet': via_battlenet})
+                              'battlenet': via_battlenet,
+                              'linux': getattr(self.backend, 'name', '') == 'linux'})
         if getattr(sys, 'frozen', False):
             worker = [sys.executable, '--run-game', str(request)]
         else:
@@ -138,6 +140,23 @@ class LaunchManager(QObject):
         self.processes[slug] = (process, path)
         self.timer.start()
         self.changed.emit(slug, 'running', str(path))
+
+    def release_failed_launches(self):
+        if getattr(self.backend, 'name', '') != 'linux':
+            raise ValueError('Launch recovery is available for Linux runners.')
+        if game_running():
+            raise ValueError('Close StarCraft II before recovering launch controls.')
+        for slug, (_, path) in list(self.processes.items()):
+            record = read_json(path.with_suffix('.process'))
+            if not isinstance(record, dict) or record.get('slug') != slug:
+                raise ValueError('The launch record is damaged. Keep the logs for review.')
+            if game_running():
+                raise ValueError('StarCraft II started. Close it before recovering launch controls.')
+            atomic_json(path.with_suffix('.process'), {**record, 'released': True})
+            del self.processes[slug]
+            self.changed.emit(slug, 'finished', str(path))
+        if not self.processes:
+            self.timer.stop()
 
     def poll(self):
         for slug, (process, path) in list(self.processes.items()):

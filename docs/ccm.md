@@ -73,10 +73,19 @@ banks remain shared with the game. Account backups provide an explicit way to
 restore progress; automatic per-campaign profiles are not implemented.
 
 The launch monitor waits up to two minutes for SC2 to start and then tracks the
-game until it exits. Campaign controls stay disabled during that time, even if
+game until it exits. On Linux, this does not depend on Wine or Proton exiting or
+closing its output pipe. Campaign controls stay disabled during that time, even if
 the manager is closed and reopened. Leaving Battle.net open does not keep the
 campaign controls locked. If startup times out, check Battle.net for sign-in or
 updates before retrying. The selected campaign stays loaded.
+
+On Linux, Recover launch controls is available while a launch is being tracked.
+Use it for a failed launch left behind by an older version. Close the stalled
+Wine or Proton launch first, then confirm recovery. Recovery refuses while SC2
+is detected, keeps campaign files and logs, and prevents the old launch record
+from disabling controls again after reopening. It does not terminate processes;
+a runner left open may still start the game later. New launch attempts use
+separate log and result files so an old monitor cannot overwrite their records.
 
 ## Saved progress
 
