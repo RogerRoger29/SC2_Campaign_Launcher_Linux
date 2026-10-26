@@ -38,11 +38,27 @@ def external_environment(environment):
     return env
 
 
+def completed_code(path, identity):
+    if not isinstance(identity, str) or not identity:
+        return None
+    try:
+        result = read_json(path, {})
+        if (isinstance(result, dict) and result.get('id') == identity
+                and result.get('complete') is True and type(result.get('code')) is int):
+            return result['code']
+    except (OSError, ValueError, TypeError):
+        pass
+    return None
+
+
 class RecordedProcess:
     def __init__(self, record, result):
         self.record, self.result = record, result
 
     def poll(self):
+        code = completed_code(self.result, self.record['id'])
+        if code is not None:
+            return code
         identity = process_identity(self.record['pid'])
         if identity is not None and identity == self.record['identity']:
             return None
@@ -64,6 +80,7 @@ class LaunchManager(QObject):
         self.backend = backend
         self.log_dir = log_dir
         self.processes = {}
+        self.output_processes = []
         self.timer = QTimer(self)
         self.timer.setInterval(1000)
         self.timer.timeout.connect(self.poll)
@@ -146,7 +163,7 @@ class LaunchManager(QObject):
             raise ValueError('Launch recovery is available for Linux runners.')
         if game_running():
             raise ValueError('Close StarCraft II before recovering launch controls.')
-        for slug, (_, path) in list(self.processes.items()):
+        for slug, (process, path) in list(self.processes.items()):
             record = read_json(path.with_suffix('.process'))
             if not isinstance(record, dict) or record.get('slug') != slug:
                 raise ValueError('The launch record is damaged. Keep the logs for review.')
@@ -154,16 +171,29 @@ class LaunchManager(QObject):
                 raise ValueError('StarCraft II started. Close it before recovering launch controls.')
             atomic_json(path.with_suffix('.process'), {**record, 'released': True})
             del self.processes[slug]
+            self._track_output(process)
             self.changed.emit(slug, 'finished', str(path))
-        if not self.processes:
+        if not self.processes and not self.output_processes:
             self.timer.stop()
 
+    def _track_output(self, process):
+        if not isinstance(process, RecordedProcess) and process.poll() is None:
+            self.output_processes.append(process)
+
     def poll(self):
+        self.output_processes = [p for p in self.output_processes if p.poll() is None]
         for slug, (process, path) in list(self.processes.items()):
-            code = process.poll()
+            try:
+                record = read_json(path.with_suffix('.process'), {})
+                code = completed_code(path.with_suffix('.result'), record.get('id'))
+            except (OSError, ValueError, AttributeError):
+                code = None
+            if code is None:
+                code = process.poll()
             if code is None:
                 continue
             del self.processes[slug]
+            self._track_output(process)
             detail = ''
             try:
                 result = read_json(path.with_suffix('.result'), {})
@@ -175,8 +205,8 @@ class LaunchManager(QObject):
                 pass
             if code:
                 self.changed.emit(slug, 'failed',
-                                  f'The game runner exited with code {code}.\n{detail}\nLog: {path}\n\n{log_tail(path)}')
+                                  f'Launch failed (code {code}).\n{detail}\nLog: {path}\n\n{log_tail(path)}')
             else:
                 self.changed.emit(slug, 'finished', str(path))
-        if not self.processes:
+        if not self.processes and not self.output_processes:
             self.timer.stop()

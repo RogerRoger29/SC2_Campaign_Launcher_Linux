@@ -79,6 +79,14 @@ the manager is closed and reopened. Leaving Battle.net open does not keep the
 campaign controls locked. If startup times out, check Battle.net for sign-in or
 updates before retrying. The selected campaign stays loaded.
 
+Linux process detection ignores exited zombie processes. After a timeout or game
+exit, the launch result releases the controls independently of the output reader.
+The reader continues collecting bounded logs until the runner and its descendants
+close their output, so a slow initialization does not lose its pipe. It may remain
+in the background after the launch result is shown. A late game start is still
+possible; close the stalled runner before retrying. File operations check for a
+running game before modifying campaign or progress files.
+
 On Linux, Recover launch controls is available while a launch is being tracked.
 Use it for a failed launch left behind by an older version. Close the stalled
 Wine or Proton launch first, then confirm recovery. Recovery refuses while SC2

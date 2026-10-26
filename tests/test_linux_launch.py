@@ -198,3 +198,112 @@ def test_recovery_button_restores_controls_for_legacy_launch(windows, settings, 
     assert window.settings_btn.isEnabled()
     assert not window.recover_launch_btn.isVisible()
     assert 'recovered' in window.notice.text()
+
+
+@pytest.mark.parametrize('result', [
+    {'id': 'old', 'code': 1},
+    {'id': 'another attempt', 'complete': True, 'code': 1},
+    {'id': 'old', 'complete': True, 'code': True},
+    {'id': 'old', 'complete': True, 'code': '1'},
+])
+def test_incomplete_or_unrelated_result_cannot_release_live_monitor(qapp, tmp_path, result):
+    path = old_launch(tmp_path)
+    atomic_json(path.with_suffix('.result'), result)
+    manager = LaunchManager(Mock(), tmp_path)
+    try:
+        assert 'Test' in manager.processes
+        manager.poll()
+        assert 'Test' in manager.processes
+    finally:
+        manager.timer.stop()
+
+
+@pytest.mark.skipif(sys.platform != 'linux', reason='Real worker and pipe lifetime')
+@pytest.mark.parametrize('outcome', ['timeout', 'game_exit'])
+def test_worker_keeps_output_open_after_completion_and_reopening(qapp, tmp_path, monkeypatch, outcome):
+    ready, finish = tmp_path / 'ready', tmp_path / 'finish'
+    start_monitor, live_game, observed = (tmp_path / name for name in ('monitor', 'live', 'observed'))
+    marker = tmp_path / 'writer-result'
+    child = ('import os,time\nfrom pathlib import Path\n'
+             f'Path({str(ready)!r}).touch()\n'
+             'deadline=time.monotonic()+15\n'
+             f'while not Path({str(finish)!r}).exists() and time.monotonic()<deadline: time.sleep(.01)\n'
+             'try:\n'
+             '    for _ in range(48): os.write(1,b"x"*65536)\n'
+             '    os.write(1,b"late output complete\\n")\n'
+             f'    Path({str(marker)!r}).write_text("success")\n'
+             'except BrokenPipeError:\n'
+             f'    Path({str(marker)!r}).write_text("broken pipe")\n')
+    helper = ('import sys,time\nfrom pathlib import Path\n'
+              'from sc2_campaign_launcher_linux import game_process as gp\n'
+              'def game_pids():\n'
+              f'    if Path({str(live_game)!r}).exists():\n'
+              f'        Path({str(observed)!r}).touch(); return {{42}}\n'
+              '    return set()\n'
+              'gp.game_pids=game_pids\n'
+              'original=gp.monitor_linux\n'
+              'def monitor(process, drain):\n'
+              '    deadline=time.monotonic()+15\n'
+              f'    while not Path({str(start_monitor)!r}).exists() and time.monotonic()<deadline: time.sleep(.01)\n'
+              f'    return original(process,drain,timeout={.2 if outcome == "timeout" else 10})\n'
+              'gp.monitor_linux=monitor\n'
+              'raise SystemExit(gp.run(Path(sys.argv[1])))\n')
+    spawn = subprocess.Popen
+    workers = []
+
+    def spawn_worker(command, **kwargs):
+        kwargs['env']['PYTHONPATH'] = os.pathsep.join(sys.path)
+        process = spawn([sys.executable, '-c', helper, command[-1]], **kwargs)
+        workers.append(process)
+        return process
+
+    monkeypatch.setattr(launching.subprocess, 'Popen', spawn_worker)
+    monkeypatch.setattr(launching, 'game_running', lambda: False)
+    backend = Mock()
+    backend.name = 'linux'
+    backend.command.return_value = ([sys.executable, '-c', child], dict(os.environ))
+    manager = LaunchManager(backend, tmp_path / 'logs')
+    manager.launch_target('Test', LaunchOptions(tmp_path), None)
+    worker, log = manager.processes['Test']
+    reopened = LaunchManager(backend, manager.log_dir)
+    events = []
+    manager.changed.connect(lambda *args: events.append(args))
+    try:
+        spin(qapp, ready.exists)
+        assert reopened.processes
+        start_monitor.touch()
+        if outcome == 'game_exit':
+            live_game.touch()
+            spin(qapp, observed.exists)
+            live_game.unlink()
+        spin(qapp, log.with_suffix('.result').exists)
+        result = read_json(log.with_suffix('.result'))
+        assert result['complete'] is True
+        assert result['code'] == (1 if outcome == 'timeout' else 0)
+        assert worker.poll() is None, 'The output reader must survive the launch result'
+        manager.poll()
+        reopened.poll()
+        assert not manager.processes and not reopened.processes
+        assert not LaunchManager(backend, manager.log_dir).processes
+        assert events[-1][1] == ('failed' if outcome == 'timeout' else 'finished')
+        if outcome == 'timeout':
+            assert events[-1][2].startswith('Launch failed (code 1).')
+        finish.touch()
+        assert worker.wait(timeout=10) == result['code']
+        assert marker.read_text() == 'success'
+        assert log.stat().st_size <= game_process.MAX_LOG
+        assert b'late output complete' in log.read_bytes()
+        manager.poll()
+        assert not manager.output_processes
+    finally:
+        start_monitor.touch()
+        finish.touch()
+        live_game.unlink(missing_ok=True)
+        for process in workers:
+            try:
+                process.wait(timeout=15)
+            except subprocess.TimeoutExpired:
+                process.terminate()
+                process.wait(timeout=5)
+        manager.timer.stop()
+        reopened.timer.stop()

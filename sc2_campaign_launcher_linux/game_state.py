@@ -19,12 +19,20 @@ def game_pids():
             raise OSError('Could not check whether StarCraft II is running.')
         return {int(row[1]) for row in csv.reader(result.stdout.splitlines())
                 if len(row) >= 2 and row[0].casefold() in names and row[1].isdigit()}
+    return linux_game_pids()
+
+
+def linux_game_pids(proc=Path('/proc')):
     pids = set()
-    for path in Path('/proc').glob('[0-9]*/comm'):
+    for path in proc.glob('[0-9]*/stat'):
         try:
-            if path.read_text().strip().casefold() in names:
+            # Read the name and state together; a second read could see a reused PID.
+            header, _, fields = path.read_text().rpartition(')')
+            name = header.split('(', 1)[1].casefold()
+            state = fields.split()[0]
+            if name in {'sc2.exe', 'sc2_x64.exe'} and state not in {'Z', 'X', 'x'}:
                 pids.add(int(path.parent.name))
-        except OSError:
+        except (OSError, IndexError, ValueError):
             continue
     return pids
 

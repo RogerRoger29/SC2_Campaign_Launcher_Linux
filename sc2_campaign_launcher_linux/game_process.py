@@ -1,12 +1,12 @@
 """Monitor direct and Battle.net launches independently of the launcher window."""
 
 import os
-import selectors
 import subprocess
 import sys
 import time
 from contextlib import contextmanager
 from pathlib import Path
+from threading import Thread
 
 if __package__ in (None, ''):
     sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
@@ -141,7 +141,8 @@ def run(request_path):
             code = run_direct(request, log)
     except (OSError, ValueError) as failure:
         error = str(failure)
-    atomic_json(result, {'id': request['id'], 'code': code, 'error': error})
+    atomic_json(result, {'id': request['id'], 'code': code, 'error': error,
+                        'complete': True})
     return code
 
 
@@ -152,31 +153,21 @@ def run_direct(request, log):
         process = subprocess.Popen(request['command'], cwd=request['root'], stdin=subprocess.DEVNULL,
                                    stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
     if request.get('linux'):
-        with process.stdout, selectors.DefaultSelector() as selector:
-            os.set_blocking(process.stdout.fileno(), False)
-            selector.register(process.stdout, selectors.EVENT_READ)
+        # Keep the pipe reader alive after reporting a timeout or game exit.
+        # Wine and descendants may still write output; closing it would break them.
+        Thread(target=drain_output, args=(process, log), name='game-output', daemon=False).start()
+        return monitor_linux(process, lambda: time.sleep(.1))
+    return drain_output(process, log)
 
-            def drain():
-                if not selector.get_map():
-                    time.sleep(.1)
-                    return
-                for key, _ in selector.select(.1):
-                    chunk = os.read(key.fd, 64 * 1024)
-                    if not chunk:
-                        selector.unregister(key.fileobj)
-                    else:
-                        try:
-                            append_log(log, chunk)
-                        except OSError:
-                            pass
 
-            return monitor_linux(process, drain)
+def drain_output(process, log):
     with process.stdout:
         while chunk := process.stdout.read1(64 * 1024):
             try:
                 append_log(log, chunk)
             except OSError:
                 pass  # Drain the pipe even if the log directory becomes unwritable.
+    # Reap the runner once its output closes without holding up the launch result.
     return process.wait()
 
 
@@ -196,7 +187,7 @@ def monitor_linux(process, drain, timeout=120):
                 raise OSError('StarCraft II did not start within two minutes. Check the launch log and '
                               'close any stalled Wine or Proton launch before retrying. '
                               'The campaign remains loaded.')
-        # Read a bounded amount without waiting for Wine or a descendant to close stdout.
+        # Output is drained independently so neither silence nor a full pipe blocks this check.
         drain()
 
 
